@@ -2,8 +2,9 @@
 #
 # The goal is to regularly sync 'net-next' branch on this repo with netdev's one.
 # Then our topgit tree can be updated and the modifications can be pushed only
-# after a successful build and tests. In case of problem, a notification will be
-# sent to Matthieu Baerts.
+# if there were no merge conflicts.
+#
+# In case of questions about this script, please notify Matthieu Baerts.
 
 # We should manage all errors in this script
 set -e
@@ -11,9 +12,6 @@ set -e
 # Env vars that can be set to change the behaviour
 UPD_TG_FORCE_SYNC="${INPUT_FORCE_SYNC:-0}"
 UPD_TG_NOT_BASE="${INPUT_NOT_BASE:-0}"
-UPD_TG_VALIDATE_EACH_TOPIC="${INPUT_VALIDATE_EACH_TOPIC:-1}"
-
-export CCACHE_MAXSIZE="${INPUT_CCACHE_MAXSIZE:-5G}"
 
 # Github remote
 GIT_REMOTE_GITHUB_NAME="origin"
@@ -25,13 +23,8 @@ GIT_REMOTE_NET_NEXT_BRANCH="master"
 # Local repo
 TG_TOPIC_BASE="net-next"
 TG_TOPIC_TOP="t/upstream"
-TG_TOPICS_SKIP=("t/DO-NOT-MERGE-mptcp-enabled-by-default"
-		"t/mptcp-remove-multi-addresses-and-subflows-in-PM")
 TG_EXPORT_BRANCH="export"
 TG_FOR_REVIEW_BRANCH="for-review"
-
-# Sparse
-SPARSE_URL_BASE="https://mirrors.edge.kernel.org/pub/software/devel/sparse/dist/"
 
 ERR_MSG=""
 TG_PUSH_NEEDED=0
@@ -77,35 +70,6 @@ git_checkout() { local branch remote
 # [ $1: ref, default: HEAD ]
 git_get_sha() {
 	git rev-parse "${1:-HEAD}"
-}
-
-git_get_current_branch() {
-	git rev-parse --abbrev-ref HEAD
-}
-
-tg_get_first() {
-	tg info --series | head -n1 | awk '{ print $1 }'
-}
-
-# [ $1: branch, default: current branch ]
-is_tg_top() {
-	[ "${1:-$(git_get_current_branch)}" = "${TG_TOPIC_TOP}" ]
-}
-
-# $1: branch
-skipped_tg_topic() { local topic curr
-	curr="${1}"
-
-	for topic in "${TG_TOPICS_SKIP[@]}"; do
-		if [ "${topic}" = "${curr}" ]; then
-			return 0
-		fi
-	done
-	return 1
-}
-
-empty_tg_topic() {
-	[ "$(tg patch | grep -c "diff --git a/")" = "0" ]
 }
 
 
@@ -226,215 +190,6 @@ tg_trap_reset() { local rc
 }
 
 
-################
-## Validation ##
-################
-
-# $*: parameters for defconfig
-generate_config_no_mptcp() {
-	make defconfig "${@}"
-
-	# no need to compile some drivers for our tests
-	echo | scripts/config \
-		--disable DRM \
-		--disable PCCARD \
-		--disable ATA \
-		--disable MD \
-		--disable PPS \
-		--disable SOUND \
-		--disable USB \
-		--disable IOMMU_SUPPORT \
-		--disable INPUT_LEDS \
-		--disable AGP \
-		--disable VGA_ARB \
-		--disable EFI \
-		--disable WLAN \
-		--disable WIRELESS \
-		--disable LOGO \
-		--disable NFS_FS \
-		--disable XFRM_USER \
-		--disable INET6_AH \
-		--disable INET6_ESP \
-		--disable NETDEVICES
-}
-
-# $*: parameters for defconfig
-generate_config_mptcp() {
-	generate_config_no_mptcp "${@}"
-
-	# to avoid warnings/errors, enable KUnit without the extras
-	echo | scripts/config -e KUNIT -d KUNIT_ALL_TESTS \
-	                      -d LINEAR_RANGES_TEST -d BITS_TEST
-
-	# For INET_MPTCP_DIAG
-	echo | scripts/config -e INET_DIAG \
-	                      -d INET_UDP_DIAG -d INET_RAW_DIAG -d INET_DIAG_DESTROY
-
-	echo | scripts/config -e MPTCP -e IPV6 -e MPTCP_IPV6 -e MPTCP_KUNIT_TESTS
-
-	# Here, we want to have a failure if some new MPTCP options are
-	# available not to forget to enable them. We then don't want to run
-	# 'make olddefconfig' which will silently disable these new options.
-}
-
-generate_config_i386_mptcp() {
-	generate_config_mptcp "KBUILD_DEFCONFIG=i386_defconfig"
-}
-
-# $*: config description
-compile_kernel() {
-	if ! KCFLAGS="-Werror" make -j"$(nproc)" -l"$(nproc)"; then
-		err "Unable to compile ${*}"
-		return 1
-	fi
-}
-
-check_compilation_i386() {
-	generate_config_i386_mptcp
-	compile_kernel "with i386 and CONFIG_MPTCP"
-}
-
-check_compilation_no_ipv6() {
-	generate_config_mptcp
-	echo | scripts/config -d IPV6 -d MPTCP_IPV6
-	compile_kernel "without IPv6 and with CONFIG_MPTCP"
-}
-
-# $1: src file ; $2: warn line
-check_sparse_output() { local src warn unlock_sock_fast
-	src="${1}"
-	warn="${2}"
-
-	if [ -z "${warn}" ]; then
-		return 0
-	fi
-
-	# ignore 'notes', only interested in the error message
-	if [ "$(echo "${warn}" | \
-		grep -cE "^${src}: note: in included file")" -eq 1 ]; then
-		return 0
-	fi
-
-	for unlock_sock_fast in $(git grep -p unlock_sock_fast -- "${src}" | \
-					grep "${src}=" | \
-					sed "s/.*\b\(\S\+\)(.*/\1/g"); do
-		# ./include/net/sock.h:1608:31: warning: context imbalance in 'mptcp_close' - unexpected unlock
-		if [ "$(echo "${warn}" | \
-			grep -cE "./include/net/sock.h:[0-9]+:[0-9]+: warning: context imbalance in '${unlock_sock_fast}' - unexpected unlock")" -eq 1 ]; then
-			echo "Ignore the following warning because unlock_sock_fast() conditionally releases the socket lock: '${warn}'"
-			return 0
-		fi
-	done
-
-	case "${src}" in
-		"net/mptcp/protocol.c")
-			# net/mptcp/protocol.c:1535:24: warning: context imbalance in 'mptcp_sk_clone' - unexpected unlock
-			if [ "$(echo "${warn}" | grep -cE "net/mptcp/protocol.c:[0-9]+:[0-9]+: warning: context imbalance in 'mptcp_sk_clone' - unexpected unlock")" -eq 1 ]; then
-				echo "Ignore the following warning because sk_clone_lock() conditionally acquires the socket lock, (if return value != 0), so we can't annotate the caller as 'release': ${warn}"
-				return 0
-			fi
-		;;
-	esac
-
-	echo "Non whitelisted warning: ${warn}"
-	return 1
-}
-
-check_compilation_mptcp_extra_warnings() { local src obj warn
-	for src in net/mptcp/*.c; do
-		obj="${src/%.c/.o}"
-		if [[ "${src}" = *"_test.mod.c" ]]; then
-			continue
-		fi
-
-		touch "${src}"
-		KCFLAGS="-Werror" make W=1 "${obj}" || return 1
-
-		touch "${src}"
-		# RC is not >0 if warn but warn are lines not starting with spaces
-		while read -r warn; do
-			check_sparse_output "${src}" "${warn}" || return 1
-		done <<< "$(make C=1 "${obj}" 2>&1 >/dev/null | grep "^\S")"
-	done
-}
-
-# $1: branch
-tg_has_non_mptcp_modified_files() {
-	git diff --name-only "refs/top-bases/${1}..refs/heads/${1}" | \
-		grep -qEv "^(\.top(deps|msg)$|net/mptcp/)"
-}
-
-# $1: branch
-check_compilation() { local branch
-	branch="${1}"
-
-	# no need to compile without MPTCP if we only changed files in net/mptcp
-	if is_tg_top "${branch}" || \
-	   tg_has_non_mptcp_modified_files "${branch}"; then
-		generate_config_no_mptcp
-		if ! compile_kernel "without CONFIG_MPTCP"; then
-			err "Unable to compile without CONFIG_MPTCP"
-			return 1
-		fi
-	fi
-
-	generate_config_mptcp
-	if ! compile_kernel "with CONFIG_MPTCP"; then
-		err "Unable to compile with CONFIG_MPTCP"
-		return 1
-	fi
-
-	if ! check_compilation_mptcp_extra_warnings; then
-		err "Unable to compile mptcp source code with W=1 C=1"
-		return 1
-	fi
-}
-
-validation() { local curr_branch
-	if [ "${UPD_TG_VALIDATE_EACH_TOPIC}" = "1" ]; then
-		git_checkout "$(tg_get_first)"
-
-		while true; do
-			curr_branch="$(git_get_current_branch)"
-
-			if skipped_tg_topic "${curr_branch}"; then
-				echo "We can skip this topic"
-			elif ! is_tg_top "${curr_branch}" && empty_tg_topic; then
-				echo "We can skip empty topic";
-			elif ! check_compilation "${curr_branch}"; then
-				err "Unable to compile topic ${curr_branch}"
-				return 1
-			fi
-
-			# switch to the next topic, if any, and show which one
-			tg next 2>/dev/null || break
-			tg checkout next 2>/dev/null || break
-		done
-
-		if ! is_tg_top "${curr_branch}"; then
-			err "Not at the top after validation: ${curr_branch}"
-			return 1
-		fi
-	else
-		git_checkout "${TG_TOPIC_TOP}"
-		if ! check_compilation "${TG_TOPIC_TOP}"; then
-			err "Unable to compile the new version"
-			return 1
-		fi
-	fi
-
-	if ! check_compilation_no_ipv6; then
-		err "Unable to compile without IPv6"
-		return 1
-	fi
-
-	if ! check_compilation_i386; then
-		err "Unable to compile for i386 arch"
-		return 1
-	fi
-}
-
-
 ############
 ## TG End ##
 ############
@@ -498,9 +253,6 @@ tg_for_review() { local tg_conflict_files
 ## Main ##
 ##########
 
-# Display some stats to check everything is OK with ccache
-ccache -s || true
-
 trap 'print_err "${?}"' EXIT
 
 ERR_MSG="Environment is not up to date"
@@ -517,9 +269,6 @@ trap 'tg_trap_reset "${?}"' EXIT
 ERR_MSG="Unable to update the topgit tree"
 tg_update_tree
 
-ERR_MSG="Unexpected error during the validation phase"
-validation
-
 ERR_MSG="Unable to push the update of the Topgit tree"
 tg_push_tree
 
@@ -528,6 +277,3 @@ tg_export
 
 ERR_MSG="Unable to update the ${TG_FOR_REVIEW_BRANCH} branch"
 tg_for_review
-
-# Display some stats to check everything is OK with ccache
-ccache -s || true

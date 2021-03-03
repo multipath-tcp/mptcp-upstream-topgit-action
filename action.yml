@@ -9,14 +9,6 @@ inputs:
     description: 'Set it to 1 to force a sync without updating the base from upstream'
     required: false
     default: '0'
-  validate_each_topic:
-    description: 'Set it to 1 to validate the compilation of each topic'
-    required: false
-    default: '1'
-  ccache_maxsize:
-    description: 'Set the maximum size for CCache in {{ github.workspace }}/.ccache dir'
-    required: false
-    default: '5G'
 runs:
   using: 'docker'
   image: 'Dockerfile'
