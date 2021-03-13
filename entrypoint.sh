@@ -22,6 +22,7 @@ GIT_REMOTE_NET_NEXT_BRANCH="master"
 
 # Local repo
 TG_TOPIC_BASE="net-next"
+TG_TOPIC_BASE_SHA_ORIG="${TG_TOPIC_BASE}" # will become a sha later
 TG_TOPIC_TOP="t/upstream"
 TG_EXPORT_BRANCH="export"
 TG_FOR_REVIEW_BRANCH="for-review"
@@ -72,6 +73,19 @@ git_get_sha() {
 	git rev-parse "${1:-HEAD}"
 }
 
+git_get_current_branch() {
+	git rev-parse --abbrev-ref HEAD
+}
+
+topic_has_been_upstreamed() { local subject="${1}"
+	git log \
+		--fixed-strings \
+		--grep "${subject}" \
+		--format="format:==%s==" \
+		"${TG_TOPIC_BASE_SHA_ORIG}..${TG_TOPIC_BASE}" | \
+			grep -q --fixed-strings "==${subject}=="
+}
+
 
 ##########################
 ## Check tools versions ##
@@ -99,24 +113,26 @@ check_sparse_version() { local last curr
 ## TG Update ##
 ###############
 
-tg_update_base() { local sha_before_update
+tg_update_base() {
 	git_checkout "${TG_TOPIC_BASE}"
 
 	git pull --no-stat --ff-only \
-		"${GIT_REMOTE_GITHUB_NAME}" "${TG_TOPIC_BASE}"
+		"${GIT_REMOTE_GITHUB_NAME}" \
+		"${TG_TOPIC_BASE}" || return 1
 
 	if [ "${UPD_TG_NOT_BASE}" = 1 ]; then
 		return 0
 	fi
 
-	sha_before_update=$(git_get_sha HEAD)
+	TG_TOPIC_BASE_SHA_ORIG=$(git_get_sha HEAD)
 
 	# this branch has to be in sync with upstream, no merge
 	git pull --no-stat --ff-only \
-		"${GIT_REMOTE_NET_NEXT_URL}" "${GIT_REMOTE_NET_NEXT_BRANCH}"
+		"${GIT_REMOTE_NET_NEXT_URL}" \
+		"${GIT_REMOTE_NET_NEXT_BRANCH}" || return 1
 	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && \
-	   [ "${sha_before_update}" = "$(git_get_sha HEAD)" ]; then
-		echo "Already sync with ${GIT_REMOTE_NET_NEXT_URL} (${sha_before_update})"
+	   [ "${TG_TOPIC_BASE_SHA_ORIG}" = "$(git_get_sha HEAD)" ]; then
+		echo "Already sync with ${GIT_REMOTE_NET_NEXT_URL} (${TG_TOPIC_BASE_SHA_ORIG})"
 		exit 0
 	fi
 
@@ -127,17 +143,49 @@ tg_update_base() { local sha_before_update
 	TG_PUSH_NEEDED=1
 }
 
-tg_update() { local rc=0
-	tg update || rc="${?}"
+tg_update_abort_exit() {
+	ERR_MSG+=": $(git_get_current_branch)"
 
-	if [ "${rc}" != 0 ]; then
+	tg update --abort
+
+	exit 1
+}
+
+tg_update_resolve_or_exit() { local subject
+	subject=$(grep "^Subject: " .topmsg | cut -d\] -f2- | sed "s/^ //")
+
+	if ! topic_has_been_upstreamed "${subject}"; then
 		# display useful info in the log for the notifications
 		git --no-pager diff || true
 
-		tg update --abort
+		tg_update_abort_exit
 	fi
 
-	return "${rc}"
+	echo "The commit '${subject}' has been upstreamed, trying auto-fix:"
+
+	git checkout --theirs .
+	git add -u
+	git commit -s --no-edit
+
+	if [ -n "$(tg files)" ]; then
+		echo "This topic was supposed to be empty because the commit " \
+		     "seems to have been sent upstream: abording."
+
+		# display useful info in the log for the notifications
+		tg patch || true
+
+		tg_update_abort_exit
+	fi
+}
+
+tg_update() {
+	if ! tg update; then
+		tg_update_resolve_or_exit
+
+		while ! tg update --continue; do
+			tg_update_resolve_or_exit
+		done
+	fi
 }
 
 tg_update_tree() {
