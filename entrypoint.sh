@@ -87,28 +87,6 @@ topic_has_been_upstreamed() { local subject="${1}"
 }
 
 
-##########################
-## Check tools versions ##
-##########################
-
-check_sparse_version() { local last curr
-	# Force a rebuild if a new version is available
-	last=$(curl "${SPARSE_URL_BASE}" 2>/dev/null | \
-		grep -o 'sparse-[0-9]\+\.[0-9]\+\.[0-9]\+\.tar' | \
-		grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | \
-		sort -uV | \
-		tail -n1)
-	curr=$(sparse --version)
-
-	if [ "${curr}" = "${last}" ]; then
-		echo "Using the last version of Sparse: ${curr}"
-	else
-		err "Not the last version of Sparse: ${curr} < ${last}"
-		return 1
-	fi
-}
-
-
 ###############
 ## TG Update ##
 ###############
@@ -302,9 +280,6 @@ tg_for_review() { local tg_conflict_files
 ##########
 
 trap 'print_err "${?}"' EXIT
-
-ERR_MSG="Environment is not up to date"
-check_sparse_version
 
 ERR_MSG="Unable to init git"
 git_init
