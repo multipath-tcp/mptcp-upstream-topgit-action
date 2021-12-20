@@ -6,9 +6,9 @@ RUN apt-get update && \
     apt-get clean
 
 # TopGit
-ARG TG_URL="https://github.com/mackyle/topgit/releases/download/topgit-0.19.12/topgit-0.19.12.tar.gz"
+ARG TG_URL="https://github.com/mackyle/topgit/releases/download/topgit-0.19.13/topgit-0.19.13.tar.gz"
 ARG TG_TARBALL="topgit.tar.gz"
-ARG TG_SHA="8b6b89c55108cc75d007f63818e43aa91b69424b5b8384c06ba2aa3122f5e440  ${TG_TARBALL}"
+ARG TG_SHA="0d97c1b8fbcfd353cfa18cc0ae3e03da90848d5e9364e454f2f616046e1aa8c8  ${TG_TARBALL}"
 
 RUN cd /tmp && \
     curl -L "${TG_URL}" -o "${TG_TARBALL}" && \

@@ -236,7 +236,7 @@ tg_export() { local current_date tag
 	current_date=$(date +%Y%m%dT%H%M%S)
 	tag="${TG_EXPORT_BRANCH}/${current_date}"
 
-	tg export --linearize --force "${TG_EXPORT_BRANCH}"
+	tg export --linearize --force --notes "${TG_EXPORT_BRANCH}"
 
 	# change the committer for the last commit to let Intel's kbuild starting tests
 	GIT_COMMITTER_NAME="Matthieu Baerts" \
