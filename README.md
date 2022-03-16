@@ -8,6 +8,10 @@ publish the new tree to the repo if there were no merge conflicts.
 
 ## Inputs
 
+### `force_upd_net`
+Set it to 1 to force updating the -net base with upstream instead of the
+merge-base with net-next. Default: `0`.
+
 ### `force_sync`
 
 Set it to 1 to force a sync even if net-next is already up to date. Default:
@@ -23,5 +27,6 @@ Set it to 1 to force a sync without updating the base from upstream. Default:
 ```yaml
 uses: multipath-tcp/mptcp-upstream-topgit-action@main
 with:
+  force_upd_net: '1'
   force_sync: '1'
 ```

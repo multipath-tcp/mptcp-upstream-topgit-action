@@ -1,6 +1,10 @@
 name: 'MPTCP Upstream TopGit Action'
 description: 'Manage MPTCP TopGit tree: sync with upstream, export'
 inputs:
+  force_upd_net:
+    description: 'Set it to 1 to force updating the -net base with upstream instead of the merge-base with net-next'
+    required: false
+    default: '0'
   force_sync:
     description: 'Set it to 1 to force a sync even if net-next is already up to date'
     required: false

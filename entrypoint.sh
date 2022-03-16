@@ -12,6 +12,7 @@ set -e
 # Env vars that can be set to change the behaviour
 UPD_TG_FORCE_SYNC="${INPUT_FORCE_SYNC:-0}"
 UPD_TG_NOT_BASE="${INPUT_NOT_BASE:-0}"
+UPD_TG_FORCE_UPD_NET="${INPUT_FORCE_UPD_NET:-0}"
 
 # Github remote
 GIT_REMOTE_GITHUB_NAME="origin"
@@ -133,7 +134,7 @@ tg_update_base_net_next() {
 		"${GIT_REMOTE_BRANCH_NET_NEXT}"
 
 	# if net-next is up to date, -net should be as well except if we force
-	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && \
+	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && [ "${UPD_TG_FORCE_UPD_NET}" != 1 ] && \
 	   [ "${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT}" = "$(git_get_sha HEAD)" ]; then
 		echo "Already sync with ${GIT_REMOTE_URL_NET_NEXT} (${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT})"
 		exit 0
@@ -150,9 +151,20 @@ tg_update_base_net() { local new_base
 	# FETCH_HEAD == net/master
 	git fetch "${GIT_REMOTE_URL_NET}" "${GIT_REMOTE_BRANCH_NET}"
 
-	# to avoid having to resolve conflicts when merging -net and
-	# net-next, we take the last common commit between the two
-	new_base=$(git merge-base FETCH_HEAD "${TG_TOPIC_BASE_NET_NEXT}")
+	if [ "${UPD_TG_FORCE_UPD_NET}" = 1 ]; then
+		new_base="FETCH_HEAD"
+	else
+		# to avoid having to resolve conflicts when merging -net and
+		# net-next, we take the last common commit between the two
+		new_base=$(git merge-base FETCH_HEAD "${TG_TOPIC_BASE_NET_NEXT}")
+
+		if git merge-base --is-ancestor "${TG_TOPIC_BASE_NET}" "${new_base}"; then
+			echo "Going to update the -net base (if new_base is different)"
+		else
+			echo "The -net base is newer than the common commit, no modif"
+			new_base="${TG_TOPIC_BASE_NET}"
+		fi
+	fi
 
 	# this branch has to be in sync with upstream, no merge
 	git merge --no-stat --ff-only "${new_base}"
