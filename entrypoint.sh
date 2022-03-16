@@ -17,18 +17,25 @@ UPD_TG_NOT_BASE="${INPUT_NOT_BASE:-0}"
 GIT_REMOTE_GITHUB_NAME="origin"
 
 # Netdev remote
-GIT_REMOTE_NET_NEXT_URL="git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git"
-GIT_REMOTE_NET_NEXT_BRANCH="master"
+GIT_REMOTE_URL_NET="git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net.git"
+GIT_REMOTE_BRANCH_NET="master"
+GIT_REMOTE_URL_NET_NEXT="git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git"
+GIT_REMOTE_BRANCH_NET_NEXT="master"
 
 # Local repo
-TG_TOPIC_BASE="net-next"
-TG_TOPIC_BASE_SHA_ORIG="${TG_TOPIC_BASE}" # will become a sha later
-TG_TOPIC_TOP="t/upstream"
-TG_EXPORT_BRANCH="export"
-TG_FOR_REVIEW_BRANCH="for-review"
+TG_TOPIC_BASE_NET_NEXT="net-next"
+TG_TOPIC_BASE_NET="net"
+TG_TOPIC_BASE_SHA_ORIG_NET_NEXT="${TG_TOPIC_BASE_NET_NEXT}" # will become a sha later
+TG_TOPIC_BASE_SHA_ORIG_NET="${TG_TOPIC_BASE_NET}" # will become a sha later
+TG_TOPIC_TOP_NET_NEXT="t/upstream"
+TG_TOPIC_TOP_NET="${TG_TOPIC_TOP_NET_NEXT}-net"
+TG_EXPORT_BRANCH_NET_NEXT="export"
+TG_EXPORT_BRANCH_NET="${TG_EXPORT_BRANCH_NET_NEXT}-net"
+TG_FOR_REVIEW_BRANCH_NET_NEXT="for-review"
+TG_FOR_REVIEW_BRANCH_NET="${TG_FOR_REVIEW_BRANCH_NET_NEXT}-net"
 
 ERR_MSG=""
-TG_PUSH_NEEDED=0
+TG_NEW_BASE_NET=0
 
 ###########
 ## Utils ##
@@ -77,12 +84,15 @@ git_get_current_branch() {
 	git rev-parse --abbrev-ref HEAD
 }
 
-topic_has_been_upstreamed() { local subject="${1}"
+topic_has_been_upstreamed() { local subject range
+	subject="${1}"
+	range="${2}"
+
 	git log \
 		--fixed-strings \
 		--grep "${subject}" \
 		--format="format:==%s==" \
-		"${TG_TOPIC_BASE_SHA_ORIG}..${TG_TOPIC_BASE}" | \
+		"${range}" | \
 			grep -q --fixed-strings "==${subject}=="
 }
 
@@ -91,34 +101,65 @@ topic_has_been_upstreamed() { local subject="${1}"
 ## TG Update ##
 ###############
 
-tg_update_base() {
-	git_checkout "${TG_TOPIC_BASE}"
+# $1: branch
+tg_update_base_github() { local branch
+	branch="${1}"
+
+	git_checkout "${branch}"
 
 	git pull --no-stat --ff-only \
 		"${GIT_REMOTE_GITHUB_NAME}" \
-		"${TG_TOPIC_BASE}" || return 1
+		"${branch}"
+}
 
+tg_update_base_local() {
+	tg_update_base_github "${TG_TOPIC_BASE_NET}"
+	TG_TOPIC_BASE_SHA_ORIG_NET=$(git_get_sha HEAD)
+
+	tg_update_base_github "${TG_TOPIC_BASE_NET_NEXT}"
+	TG_TOPIC_BASE_SHA_ORIG_NET_NEXT=$(git_get_sha HEAD)
+}
+
+tg_update_base_net_next() {
 	if [ "${UPD_TG_NOT_BASE}" = 1 ]; then
 		return 0
 	fi
 
-	TG_TOPIC_BASE_SHA_ORIG=$(git_get_sha HEAD)
+	git_checkout "${TG_TOPIC_BASE_NET_NEXT}"
 
 	# this branch has to be in sync with upstream, no merge
 	git pull --no-stat --ff-only \
-		"${GIT_REMOTE_NET_NEXT_URL}" \
-		"${GIT_REMOTE_NET_NEXT_BRANCH}" || return 1
+		"${GIT_REMOTE_URL_NET_NEXT}" \
+		"${GIT_REMOTE_BRANCH_NET_NEXT}"
+
+	# if net-next is up to date, -net should be as well except if we force
 	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && \
-	   [ "${TG_TOPIC_BASE_SHA_ORIG}" = "$(git_get_sha HEAD)" ]; then
-		echo "Already sync with ${GIT_REMOTE_NET_NEXT_URL} (${TG_TOPIC_BASE_SHA_ORIG})"
+	   [ "${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT}" = "$(git_get_sha HEAD)" ]; then
+		echo "Already sync with ${GIT_REMOTE_URL_NET_NEXT} (${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT})"
 		exit 0
 	fi
+}
 
-	# Push will be done with the 'tg push'
-	# in case of conflicts, the resolver will be able to sync the tree to
-	# the latest valid state, update the base manually then resolve the
-	# conflicts only once
-	TG_PUSH_NEEDED=1
+tg_update_base_net() { local new_base
+	if [ "${UPD_TG_NOT_BASE}" = 1 ]; then
+		return 0
+	fi
+
+	git_checkout "${TG_TOPIC_BASE_NET}"
+
+	# FETCH_HEAD == net/master
+	git fetch "${GIT_REMOTE_URL_NET}" "${GIT_REMOTE_BRANCH_NET}"
+
+	# to avoid having to resolve conflicts when merging -net and
+	# net-next, we take the last common commit between the two
+	new_base=$(git merge-base FETCH_HEAD "${TG_TOPIC_BASE_NET_NEXT}")
+
+	# this branch has to be in sync with upstream, no merge
+	git merge --no-stat --ff-only "${new_base}"
+
+	if [ "${TG_TOPIC_BASE_SHA_ORIG_NET}" != "$(git_get_sha HEAD)" ]; then
+		TG_NEW_BASE_NET=1
+	fi
 }
 
 tg_update_abort_exit() {
@@ -129,10 +170,13 @@ tg_update_abort_exit() {
 	exit 1
 }
 
-tg_update_resolve_or_exit() { local subject
+# $1: git range of new commits
+tg_update_resolve_or_exit() { local range subject
+	range="${1}"
+
 	subject=$(grep "^Subject: " .topmsg | cut -d\] -f2- | sed "s/^ //")
 
-	if ! topic_has_been_upstreamed "${subject}"; then
+	if ! topic_has_been_upstreamed "${subject}" "${range}"; then
 		# display useful info in the log for the notifications
 		git --no-pager diff || true
 
@@ -156,24 +200,23 @@ tg_update_resolve_or_exit() { local subject
 	fi
 }
 
+# $@: arg for tg_update_resolve_or_exit
 tg_update() {
 	if ! tg update; then
-		tg_update_resolve_or_exit
+		tg_update_resolve_or_exit "${@}"
 
 		while ! tg update --continue; do
-			tg_update_resolve_or_exit
+			tg_update_resolve_or_exit "${@}"
 		done
 	fi
 }
 
-tg_update_tree() {
-	git_checkout "${TG_TOPIC_TOP}"
+# $1: top branch, $2+: arg for tg_update_resolve_or_exit
+tg_update_tree_common() { local branch
+	branch="${1}"
+	shift
 
-	git fetch "${GIT_REMOTE_GITHUB_NAME}"
-
-	# force to add TG refs in refs/top-bases/, errit is configured for a
-	# use with these refs and here below, we also use them.
-	git config --local topgit.top-bases refs
+	git_checkout "${branch}"
 
 	# fetch and update-ref will be done
 	tg remote "${GIT_REMOTE_GITHUB_NAME}" --populate
@@ -182,8 +225,39 @@ tg_update_tree() {
 	# rest of the tree were not sync. It can happen if the tree has been
 	# updated by someone else and after, the base (only) has been updated.
 	# At the beginning of this script, we force an update of the base.
-	tg_update
-	tg_update
+	tg_update "${@}"
+	tg_update "${@}"
+}
+
+tg_update_tree_net_next() { local range
+	range="${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT}..${TG_TOPIC_BASE_NET_NEXT}"
+
+	tg_update_base_net_next
+
+	tg_update_tree_common "${TG_TOPIC_TOP_NET_NEXT}" "${range}"
+
+}
+
+tg_update_tree_net() { local range
+	range="${TG_TOPIC_BASE_SHA_ORIG_NET}..${TG_TOPIC_BASE_NET}"
+
+	tg_update_base_net
+
+	# first the tree for -net
+	tg_update_tree_common "${TG_TOPIC_TOP_NET}" "${range}"
+
+	# then the tree for net-next
+	tg_update_tree_common "${TG_TOPIC_TOP_NET_NEXT}" "${range}"
+}
+
+tg_update_tree() {
+	git fetch "${GIT_REMOTE_GITHUB_NAME}"
+
+	# force to add TG refs in refs/top-bases/: needed for restrictions/clean-up
+	git config --local topgit.top-bases refs
+
+	tg_update_tree_net_next
+	tg_update_tree_net
 }
 
 tg_get_all_topics() {
@@ -197,8 +271,11 @@ tg_reset() { local topic
 			"refs/remotes/${GIT_REMOTE_GITHUB_NAME}/top-bases/${topic}"
 		git update-ref "refs/heads/${topic}" "refs/remotes/${GIT_REMOTE_GITHUB_NAME}/${topic}"
 	done
-	# the base should be already up to date anyway.
-	git update-ref "refs/heads/${TG_TOPIC_BASE}" "refs/remotes/${GIT_REMOTE_GITHUB_NAME}/${TG_TOPIC_BASE}"
+	# the bases should be already up to date anyway.
+	git update-ref "refs/heads/${TG_TOPIC_BASE_NET}" \
+		"refs/remotes/${GIT_REMOTE_GITHUB_NAME}/${TG_TOPIC_BASE_NET}"
+	git update-ref "refs/heads/${TG_TOPIC_BASE_NET_NEXT}" \
+		"refs/remotes/${GIT_REMOTE_GITHUB_NAME}/${TG_TOPIC_BASE_NET_NEXT}"
 }
 
 # $1: last return code
@@ -220,43 +297,62 @@ tg_trap_reset() { local rc
 ## TG End ##
 ############
 
-tg_push_tree() {
-	if [ "${TG_PUSH_NEEDED}" = "0" ]; then
-		return 0
-	fi
+# $1: branch
+tg_push() { local branch
+	branch="${1}"
 
-	git_checkout "${TG_TOPIC_TOP}"
-
+	git_checkout "${branch}"
 	tg push -r "${GIT_REMOTE_GITHUB_NAME}"
 }
 
-tg_export() { local current_date tag
-	git_checkout "${TG_TOPIC_TOP}"
+tg_push_tree() {
+	tg_push "${TG_TOPIC_TOP_NET_NEXT}"
+	tg_push "${TG_TOPIC_TOP_NET}"
+}
 
-	current_date=$(date +%Y%m%dT%H%M%S)
-	tag="${TG_EXPORT_BRANCH}/${current_date}"
+tg_export_common() { local branch_top branch_export current_date tag
+	branch_top="${1}"
+	branch_export="${2}"
+	current_date="${3}"
 
-	tg export --linearize --force --notes "${TG_EXPORT_BRANCH}"
+	git_checkout "${branch_top}"
+
+	tag="${branch_export}/${current_date}"
+
+	tg export --force --notes "${branch_export}"
 
 	# change the committer for the last commit to let Intel's kbuild starting tests
 	GIT_COMMITTER_NAME="Matthieu Baerts" \
 		GIT_COMMITTER_EMAIL="matthieu.baerts@tessares.net" \
 		git commit --amend --no-edit
 
-	git push --force "${GIT_REMOTE_GITHUB_NAME}" "${TG_EXPORT_BRANCH}"
+	git push --force "${GIT_REMOTE_GITHUB_NAME}" "${branch_export}"
 
 	# send a tag to Github to keep previous commits: we might have refs to them
-	git tag "${tag}" "${TG_EXPORT_BRANCH}"
+	git tag "${tag}" "${branch_export}"
 	git push "${GIT_REMOTE_GITHUB_NAME}" "${tag}"
 }
 
-tg_for_review() { local tg_conflict_files
-	git_checkout "${TG_FOR_REVIEW_BRANCH}"
+tg_export() { local current_date
+	current_date=$(date --utc +%Y%m%dT%H%M%S)
+
+	tg_export_common "${TG_TOPIC_TOP_NET_NEXT}" "${TG_EXPORT_BRANCH_NET_NEXT}" "${current_date}"
+
+	if [ "${TG_NEW_BASE_NET}" = "1" ]; then
+		tg_export_common "${TG_TOPIC_TOP_NET}" "${TG_EXPORT_BRANCH_NET}" "${current_date}"
+	fi
+}
+
+tg_for_review_common() { local branch_top branch_review tg_conflict_files
+	branch_top="${1}"
+	branch_review="${2}"
+
+	git_checkout "${branch_review}"
 
 	git pull --no-stat --ff-only \
-		"${GIT_REMOTE_GITHUB_NAME}" "${TG_FOR_REVIEW_BRANCH}"
+		"${GIT_REMOTE_GITHUB_NAME}" "${branch_review}"
 
-	if ! git merge --no-edit --signoff "${TG_TOPIC_TOP}"; then
+	if ! git merge --no-edit --signoff "${branch_top}"; then
 		# the only possible conflict would be with the topgit files, manage this
 		tg_conflict_files=$(git status --porcelain | grep -E "^DU\\s.top(deps|msg)$")
 		if [ -n "${tg_conflict_files}" ]; then
@@ -266,12 +362,20 @@ tg_for_review() { local tg_conflict_files
 				return 1
 			fi
 		else
-			err "Unexpected conflicts when updating ${TG_FOR_REVIEW_BRANCH}"
+			err "Unexpected conflicts when updating ${branch_review}"
 			return 1
 		fi
 	fi
 
-	git push "${GIT_REMOTE_GITHUB_NAME}" "${TG_FOR_REVIEW_BRANCH}"
+	git push "${GIT_REMOTE_GITHUB_NAME}" "${branch_review}"
+}
+
+tg_for_review() {
+	tg_for_review_common "${TG_TOPIC_TOP_NET_NEXT}" "${TG_FOR_REVIEW_BRANCH_NET_NEXT}"
+
+	if [ "${TG_NEW_BASE_NET}" = "1" ]; then
+		tg_for_review_common "${TG_TOPIC_TOP_NET}" "${TG_FOR_REVIEW_BRANCH_NET}"
+	fi
 }
 
 
@@ -284,8 +388,8 @@ trap 'print_err "${?}"' EXIT
 ERR_MSG="Unable to init git"
 git_init
 
-ERR_MSG="Unable to update the topgit base"
-tg_update_base
+ERR_MSG="Unable to update the local topgit base"
+tg_update_base_local
 
 trap 'tg_trap_reset "${?}"' EXIT
 
