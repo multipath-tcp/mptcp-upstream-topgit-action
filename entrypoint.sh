@@ -91,10 +91,10 @@ topic_has_been_upstreamed() { local subject range
 
 	git log \
 		--fixed-strings \
-		--grep "${subject}" \
+		-i --grep "${subject}" \
 		--format="format:==%s==" \
 		"${range}" | \
-			grep -q --fixed-strings "==${subject}=="
+			grep -q --fixed-strings -i "==${subject}=="
 }
 
 
