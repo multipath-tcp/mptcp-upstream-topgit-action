@@ -66,6 +66,10 @@ print_err() { local rc
 git_init() {
 	git config --global user.name "Jenkins Tessares"
 	git config --global user.email "jenkins@tessares.net"
+
+	# To avoid this error:
+	#   unsafe repository ('/github/workspace' is owned by someone else)
+	git config --global --add safe.directory "${PWD}" || true
 }
 
 # $1: branch ;  [ $2: remote, default: origin ]
