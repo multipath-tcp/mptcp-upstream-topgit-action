@@ -19,9 +19,9 @@ GIT_REMOTE_GITHUB_NAME="origin"
 
 # Netdev remote
 GIT_REMOTE_URL_NET="git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net.git"
-GIT_REMOTE_BRANCH_NET="master"
+GIT_REMOTE_BRANCH_NET="main"
 GIT_REMOTE_URL_NET_NEXT="git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git"
-GIT_REMOTE_BRANCH_NET_NEXT="master"
+GIT_REMOTE_BRANCH_NET_NEXT="main"
 
 # Local repo
 TG_TOPIC_BASE_NET_NEXT="net-next"
@@ -152,7 +152,7 @@ tg_update_base_net() { local new_base
 
 	git_checkout "${TG_TOPIC_BASE_NET}"
 
-	# FETCH_HEAD == net/master
+	# FETCH_HEAD == net/main
 	git fetch "${GIT_REMOTE_URL_NET}" "${GIT_REMOTE_BRANCH_NET}"
 
 	if [ "${UPD_TG_FORCE_UPD_NET}" = 1 ]; then
