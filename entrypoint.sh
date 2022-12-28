@@ -125,6 +125,19 @@ tg_update_base_local() {
 	TG_TOPIC_BASE_SHA_ORIG_NET_NEXT=$(git_get_sha HEAD)
 }
 
+tg_update_base_net_is_up_to_date() {
+	# The -net base is updated after net-next.
+	# If net-next is up to date, -net is as well if we take a common base
+	# except if -net is forced to be updated to the latest commit.
+	if [ "${UPD_TG_FORCE_UPD_NET}" != 1 ]; then
+		return 0
+	fi
+
+	git fetch "${GIT_REMOTE_URL_NET}" "${GIT_REMOTE_BRANCH_NET}" || exit 1
+
+	[ "${TG_TOPIC_BASE_SHA_ORIG_NET}" = "$(git_get_sha FETCH_HEAD)" ]
+}
+
 tg_update_base_net_next() {
 	if [ "${UPD_TG_NOT_BASE}" = 1 ]; then
 		return 0
@@ -137,10 +150,12 @@ tg_update_base_net_next() {
 		"${GIT_REMOTE_URL_NET_NEXT}" \
 		"${GIT_REMOTE_BRANCH_NET_NEXT}"
 
-	# if net-next is up to date, -net should be as well except if we force
-	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && [ "${UPD_TG_FORCE_UPD_NET}" != 1 ] && \
+	# check both -net (updated after) and net-next before exiting
+	if [ "${UPD_TG_FORCE_SYNC}" != 1 ] && tg_update_base_net_is_up_to_date && \
 	   [ "${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT}" = "$(git_get_sha HEAD)" ]; then
-		echo "Already sync with ${GIT_REMOTE_URL_NET_NEXT} (${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT})"
+		echo "Already sync with ${GIT_REMOTE_URL_NET_NEXT}" \
+		     "(${TG_TOPIC_BASE_SHA_ORIG_NET_NEXT}) and" \
+		     "${GIT_REMOTE_URL_NET} (${TG_TOPIC_BASE_SHA_ORIG_NET})"
 		exit 0
 	fi
 }
