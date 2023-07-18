@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 # dependencies for the script
 RUN apt-get update && \
-    apt-get install -y curl hashalot tar make git && \
+    apt-get install -y curl hashalot tar make git gawk && \
     apt-get clean
 
 # TopGit
