@@ -354,7 +354,7 @@ tg_export_common() { local branch_top branch_export current_date tag
 
 	# change the committer for the last commit to let Intel's kbuild starting tests
 	GIT_COMMITTER_NAME="Matthieu Baerts" \
-		GIT_COMMITTER_EMAIL="matthieu.baerts@tessares.net" \
+		GIT_COMMITTER_EMAIL="matttbe@kernel.org" \
 		git commit --amend --no-edit
 
 	git push --force "${GIT_REMOTE_GITHUB_NAME}" "${branch_export}"
