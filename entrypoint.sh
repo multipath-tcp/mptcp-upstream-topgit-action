@@ -64,8 +64,8 @@ print_err() { local rc
 }
 
 git_init() {
-	git config --global user.name "Jenkins Tessares"
-	git config --global user.email "jenkins@tessares.net"
+	git config --global user.name "Matthieu Baerts (NGI0)"
+	git config --global user.email "matttbe@kernel.org"
 
 	# To avoid this error:
 	#   unsafe repository ('/github/workspace' is owned by someone else)
