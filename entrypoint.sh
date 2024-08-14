@@ -205,9 +205,10 @@ tg_update_abort_exit() {
 tg_update_resolve_or_exit() { local range subject
 	range="${1}"
 
-	subject=$(grep "^Subject: " .topmsg | cut -d\] -f2- | sed "s/^ //")
+	subject=$(grep "^Subject: " .topmsg 2>/dev/null | cut -d\] -f2- | sed "s/^ //")
 
-	if ! topic_has_been_upstreamed "${subject}" "${range}"; then
+	if [ -z "${subject}" ] ||
+	   ! topic_has_been_upstreamed "${subject}" "${range}"; then
 		# display useful info in the log for the notifications
 		git --no-pager diff || true
 
